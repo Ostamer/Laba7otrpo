@@ -7,23 +7,20 @@ load_dotenv()
 
 QUEUE_NAME = os.getenv('QUEUE_NAME')
 
-
 async def process_url(url):
     """
     Обрабатывает URL.
     """
     print(f"Processing {url}")
-    # Здесь добавьте код для обработки URL, например, повторную загрузку ссылок или другую логику.
-    await asyncio.sleep(1)  # Замените на вашу логику.
-
+    await asyncio.sleep(1)
 
 async def consume():
     """
     Основной асинхронный потребитель, читающий сообщения из очереди RabbitMQ.
     """
     loop = asyncio.get_event_loop()
+    message_queue = asyncio.Queue()
 
-    # Подключение к RabbitMQ
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv('RABBITMQ_HOST'),
         port=int(os.getenv('RABBITMQ_PORT')),
@@ -42,12 +39,20 @@ async def consume():
         """
         url = body.decode()
         print(f"Consumed: {url}")
-        loop.create_task(process_url(url))  # Запускаем асинхронную обработку
+        loop.call_soon_threadsafe(message_queue.put_nowait, url)
 
     channel.basic_consume(queue=QUEUE_NAME, on_message_callback=on_message, auto_ack=True)
 
+    async def process_messages():
+        while True:
+            url = await message_queue.get()
+            await process_url(url)
+
     try:
-        channel.start_consuming()  # Запуск основного цикла потребления сообщений
+        await asyncio.gather(
+            process_messages(),
+            loop.run_in_executor(None, channel.start_consuming)
+        )
     except KeyboardInterrupt:
         print("Stopping consumer...")
         channel.stop_consuming()
